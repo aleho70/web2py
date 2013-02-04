@@ -1625,7 +1625,7 @@ class SQLFORM(FORM):
             'id': ['=', '!=', '<', '>', '<=', '>=', 'in', 'not in'],
             'reference': ['=', '!='],
             'boolean': ['=', '!=']}
-        if fields[0]._db._adapter.dbengine == 'google:datastore':
+        if fields[0]._db._adapter.dbengine in ('google:datastore','google:ndb'):
             search_options['string'] = ['=', '!=', '<', '>', '<=', '>=']
             search_options['text'] = ['=', '!=', '<', '>', '<=', '>=']
             search_options['list:string'] = ['contains']
@@ -2108,7 +2108,7 @@ class SQLFORM(FORM):
                 c = 'count(*)'
                 nrows = dbset.select(c, left=left, cacheable=True,
                                      groupby=groupby).first()[c]
-            elif dbset._db._adapter.dbengine=='google:datastore':
+            elif dbset._db._adapter.dbengine in ('google:datastore','google:ndb'):
                 #if we don't set a limit, this can timeout for a large table
                 nrows = dbset.db._adapter.count(dbset.query, limit=1000)
             else:
@@ -2174,7 +2174,7 @@ class SQLFORM(FORM):
 
         cursor = True
         #figure out what page we are one to setup the limitby
-        if paginate and dbset._db._adapter.dbengine=='google:datastore':
+        if paginate and dbset._db._adapter.dbengine in ('google:datastore','google:ndb'):
             cursor = request.vars.cursor or True
             limitby = (0, paginate)
             try: page = int(request.vars.page or 1)-1
@@ -2188,7 +2188,7 @@ class SQLFORM(FORM):
 
         try:
             table_fields = [f for f in fields if f._tablename in tablenames]
-            if dbset._db._adapter.dbengine=='google:datastore':
+            if dbset._db._adapter.dbengine in ('google:datastore','google:ndb'):
                 rows = dbset.select(left=left,orderby=orderby,
                                     groupby=groupby,limitby=limitby,
                                     reusecursor=cursor,
@@ -2209,14 +2209,14 @@ class SQLFORM(FORM):
 
         message = error
         if not message and nrows:
-            if dbset._db._adapter.dbengine=='google:datastore' and nrows>=1000:
+            if dbset._db._adapter.dbengine in ('google:datastore','google:ndb') and nrows>=1000:
                 message = T('at least %(nrows)s records found') % dict(nrows=nrows)
             else:
                 message = T('%(nrows)s records found') % dict(nrows=nrows)
         console.append(DIV(message,_class='web2py_counter'))
 
         paginator = UL()
-        if paginate and dbset._db._adapter.dbengine=='google:datastore':
+        if paginate and dbset._db._adapter.dbengine in ('google:datastore','google:ndb'):
             #this means we may have a large table with an unknown number of rows.
             try:
                 page = int(request.vars.page or 1)-1
