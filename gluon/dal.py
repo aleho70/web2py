@@ -5049,120 +5049,120 @@ class GoogleNDBDatastoreAdapter(NoSQLAdapter):
 
     def select_raw(self,query,fields=None,attributes=None):
         db = self.db
-#        fields = fields or []
-#        attributes = attributes or {}
-#        args_get = attributes.get
-#        new_fields = []
-#        for item in fields:
-#            if isinstance(item,SQLALL):
-#                new_fields += item._table
-#            else:
-#                new_fields.append(item)
-#        fields = new_fields
+        fields = fields or []
+        attributes = attributes or {}
+        args_get = attributes.get
+        new_fields = []
+        for item in fields:
+            if isinstance(item,SQLALL):
+                new_fields += item._table
+            else:
+                new_fields.append(item)
+        fields = new_fields
         if query:
             tablename = self.get_table(query)
-#        elif fields:
-#            tablename = fields[0].tablename
-#            query = db._adapter.id_query(fields[0].table)
-#        else:
-#            raise SyntaxError("Unable to determine a tablename")
-#
-#        if query:
-#            if use_common_filters(query):
-#                query = self.common_filter(query,[tablename])
-#
-#        #tableobj is a GAE Model class (or subclass)
+        elif fields:
+            tablename = fields[0].tablename
+            query = db._adapter.id_query(fields[0].table)
+        else:
+            raise SyntaxError("Unable to determine a tablename")
+
+        if query:
+            if use_common_filters(query):
+                query = self.common_filter(query,[tablename])
+
+        #tableobj is a GAE Model class (or subclass)
         tableobj = db[tablename]._tableobj
-#        filters = self.expand(query)
-#
+        filters = self.expand(query)
+
         projection = None
-#        if len(db[tablename].fields) == len(fields):
-#            #getting all fields, not a projection query
-#            projection = None
-#        elif args_get('projection') == True:
-#            projection = []
-#            for f in fields:
-#                if f.type in ['text', 'blob', 'json']:
-#                    raise SyntaxError(
-#                        "text and blob field types not allowed in projection queries")
-#                else:
-#                    projection.append(f.name)
-#
-#        # projection's can't include 'id'.
-#        # it will be added to the result later
-#        query_projection = [
-#            p for p in projection if \
-#                p != db[tablename]._id.name] if projection \
-#                else None
-#
-#        # TODO: cursor is not currently used in NDB
-#        cursor = None
-#        if isinstance(args_get('reusecursor'), str):
-#            cursor = args_get('reusecursor')
-#        #items = gaendb.Query(tableobj, projection=query_projection,
-#        #                  cursor=cursor)
+        if len(db[tablename].fields) == len(fields):
+            #getting all fields, not a projection query
+            projection = None
+        elif args_get('projection') == True:
+            projection = []
+            for f in fields:
+                if f.type in ['text', 'blob', 'json']:
+                    raise SyntaxError(
+                        "text and blob field types not allowed in projection queries")
+                else:
+                    projection.append(f.name)
+
+        # projection's can't include 'id'.
+        # it will be added to the result later
+        query_projection = [
+            p for p in projection if \
+                p != db[tablename]._id.name] if projection \
+                else None
+
+        # TODO: cursor is not currently used in NDB
+        cursor = None
+        if isinstance(args_get('reusecursor'), str):
+            cursor = args_get('reusecursor')
+        #items = gaendb.Query(tableobj, projection=query_projection,
+        #                  cursor=cursor)
         items = tableobj.query()
-#        
-#        for filter in filters:
-#            if args_get('projection') == True and \
-#               filter.name in query_projection and \
-#               filter.op in ['=', '<=', '>=']:
-#                raise SyntaxError(
-#                    "projection fields cannot have equality filters")
-#            if filter.name=='__key__' and filter.op=='>' and filter.value==0:
-#                continue
-#            elif filter.name=='__key__' and filter.op=='=':
-#                if filter.value==0:
-#                    items = []
-#                elif isinstance(filter.value, Key):
-#                    # key qeuries return a class instance,
-#                    # can't use projection
-#                    # extra values will be ignored in post-processing later
-#                    #item = tableobj.get(filter.value)
-#                    # see https://docs.google.com/a/holubec.net/document/d/1AefylbadN456_Z7BZOpZEXDq8cR8LYu7QgI7bt5V0Iw/mobilebasic
-#                    item = filter.value.get()
-#                    items = (item and [item]) or []
-#                else:
-#                    # key qeuries return a class instance,
-#                    # can't use projection
-#                    # extra values will be ignored in post-processing later
-#                    item = tableobj.get_by_id(filter.value)
-#                    items = (item and [item]) or []
-#            elif isinstance(items,list): # i.e. there is a single record!
-#                items = [i for i in items if filter.apply(
-#                        getattr(item,filter.name),filter.value)]
-#            else:
-#                if filter.name=='__key__' and filter.op != 'in':
-#                    items.order('__key__')
-#                items = items.filter('%s %s' % (filter.name,filter.op),
-#                                     filter.value)
-#                
-#        if not isinstance(items,list):
-#            if args_get('left', None):
-#                raise SyntaxError('Set: no left join in appengine')
-#            if args_get('groupby', None):
-#                raise SyntaxError('Set: no groupby in appengine')
-#            orderby = args_get('orderby', False)
-#            if orderby:
-#                ### THIS REALLY NEEDS IMPROVEMENT !!!
-#                if isinstance(orderby, (list, tuple)):
-#                    orderby = xorify(orderby)
-#                if isinstance(orderby,Expression):
-#                    orderby = self.expand(orderby)
-#                orders = orderby.split(', ')
-#                for order in orders:
-#                    order={'-id':'-__key__','id':'__key__'}.get(order,order)
-#                    items = items.order(order)
-#            if args_get('limitby', None):
-#                (lmin, lmax) = attributes['limitby']
-#                (limit, offset) = (lmax - lmin, lmin)
-#                #rows = items.fetch(limit,offset=offset)
-#                rows = items.fetch(limit,offset=offset,projection=query_projection) # cursor not used
-#                #cursor is only useful if there was a limit and we didn't return
-#                # all results
-#                if args_get('reusecursor'):
-#                    db['_lastcursor'] = items.cursor()
-#                items = rows
+        
+        for filter in filters:
+            if args_get('projection') == True and \
+               filter.name in query_projection and \
+               filter.op in ['=', '<=', '>=']:
+                raise SyntaxError(
+                    "projection fields cannot have equality filters")
+            if filter.name=='__key__' and filter.op=='>' and filter.value==0:
+                continue
+            elif filter.name=='__key__' and filter.op=='=':
+                if filter.value==0:
+                    items = []
+                elif isinstance(filter.value, Key):
+                    # key qeuries return a class instance,
+                    # can't use projection
+                    # extra values will be ignored in post-processing later
+                    #item = tableobj.get(filter.value)
+                    # see https://docs.google.com/a/holubec.net/document/d/1AefylbadN456_Z7BZOpZEXDq8cR8LYu7QgI7bt5V0Iw/mobilebasic
+                    item = filter.value.get()
+                    items = (item and [item]) or []
+                else:
+                    # key qeuries return a class instance,
+                    # can't use projection
+                    # extra values will be ignored in post-processing later
+                    item = tableobj.get_by_id(filter.value)
+                    items = (item and [item]) or []
+            elif isinstance(items,list): # i.e. there is a single record!
+                items = [i for i in items if filter.apply(
+                        getattr(item,filter.name),filter.value)]
+            else:
+                if filter.name=='__key__' and filter.op != 'in':
+                    items.order('__key__')
+                items = items.filter('%s %s' % (filter.name,filter.op),
+                                     filter.value)
+                
+        if not isinstance(items,list):
+            if args_get('left', None):
+                raise SyntaxError('Set: no left join in appengine')
+            if args_get('groupby', None):
+                raise SyntaxError('Set: no groupby in appengine')
+            orderby = args_get('orderby', False)
+            if orderby:
+                ### THIS REALLY NEEDS IMPROVEMENT !!!
+                if isinstance(orderby, (list, tuple)):
+                    orderby = xorify(orderby)
+                if isinstance(orderby,Expression):
+                    orderby = self.expand(orderby)
+                orders = orderby.split(', ')
+                for order in orders:
+                    order={'-id':'-__key__','id':'__key__'}.get(order,order)
+                    items = items.order(order)
+            if args_get('limitby', None):
+                (lmin, lmax) = attributes['limitby']
+                (limit, offset) = (lmax - lmin, lmin)
+                #rows = items.fetch(limit,offset=offset)
+                rows = items.fetch(limit,offset=offset,projection=query_projection) # cursor not used
+                #cursor is only useful if there was a limit and we didn't return
+                # all results
+                if args_get('reusecursor'):
+                    db['_lastcursor'] = items.cursor()
+                items = rows
 
         return (items, tablename, projection or db[tablename].fields)
 
@@ -5244,34 +5244,6 @@ class GoogleNDBDatastoreAdapter(NoSQLAdapter):
         # table._db['_lastsql'] = self._insert(table,fields)
         tmp = table._tableobj(**dfields)
         tmp.put()
-        #print table._tableobj
-        #tmp = table._tableobj(**dfields)
-        #print tmp
-        #tmp = table._tableobj(**dfields)
-        #print tmp
-        #m = classobj(table._tablename, (table._tableobj, ), {})
-        #print(m)
-        #for k in dfields:
-        #    m[k] = dfields[k]
-        #print m
-        # table._db['_lastsql'] = self._insert(table,fields)
-        #tmp = table._tableobj(**dfields)
-        #tmp = table._tableobj(**dfields)
-        #tmp = table._tablename(**dfields)
-        #print type(table)
-        #print type(table._tableobj)
-        #print(self)
-        #tmp = table._tableobj #classobj(table._tablename, (table._tableobj, ), {})
-        #print tmp
-        #setattr(tmp, 'name', 'Ales')
-        #sprint table._tableobj(name='Ales')
-        #for k,v in dfields.items():
-            #setattr(table._tableobj, k, v)
-        #print type(table._tableobj)
-        #tmp.put()
-        #gaendb.put_multi(tmp)
-        
-        #rid = Reference(tmp.key.id())
         rid = Reference(tmp.key.integer_id())
         (rid._table, rid._record, rid._gaekey) = (table, None, tmp.key)
         return rid
