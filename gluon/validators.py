@@ -554,10 +554,11 @@ class IS_IN_DB(Validator):
                     return (values, None)
             else:
                 from dal import GoogleDatastoreAdapter
+                from dal import GoogleNDBDatastoreAdapter
 
                 def count(values, s=self.dbset, f=field):
                     return s(f.belongs(map(int, values))).count()
-                if isinstance(self.dbset.db._adapter, GoogleDatastoreAdapter):
+                if isinstance(self.dbset.db._adapter, GoogleDatastoreAdapter) or isinstance(self.dbset.db._adapter, GoogleNDBDatastoreAdapter):
                     range_ids = range(0, len(values), 30)
                     total = sum(count(values[i:i + 30]) for i in range_ids)
                     if total == len(values):
