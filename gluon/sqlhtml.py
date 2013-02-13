@@ -460,8 +460,10 @@ class CheckboxesWidget(OptionsWidget):
 
         if opts:
             opts.append(
-                INPUT(_class="hidden", requires=attr.get('requires', None),
-                      _disabled="disabled", _name=field.name,
+                INPUT(requires=attr.get('requires', None),
+                      _style="display:none;", 
+                      _disabled="disabled", 
+                      _name=field.name,
                       hideerror=False))
         return parent(*opts, **attr)
 
@@ -774,7 +776,7 @@ def formstyle_bootstrap(form, fields):
     parent = FIELDSET()
     for id, label, controls, help in fields:
         # wrappers
-        _help = SPAN(help, _class='help-inline')
+        _help = SPAN(help, _class='help-block')
         # embed _help into _controls
         _controls = DIV(controls, _help, _class='controls')
         # submit unflag by default
@@ -1713,7 +1715,7 @@ class SQLFORM(FORM):
                 )
         )
         return CAT(
-            DIV(_id=panel_id, _class='hidden', *criteria), fadd)
+            DIV(_id=panel_id, _style="display:none;", *criteria), fadd)
 
     @staticmethod
     def grid(query,
@@ -2514,7 +2516,7 @@ class SQLFORM(FORM):
         except (KeyError, ValueError, TypeError):
             redirect(URL(args=table._tablename))
         if nargs == len(args) + 1:
-            query = table._id > 0
+            query = table._id != None
 
         # filter out data info for displayed table
         if table._tablename in constraints:
@@ -2552,7 +2554,7 @@ class SQLFORM(FORM):
                             links_in_grid=links_in_grid,
                             user_signature=user_signature, **kwargs)
         if isinstance(grid, DIV):
-            header = table._plural + (field and ' for ' + field.name or '')
+            header = table._plural + (field and ' for ' + field.label or '')
             breadcrumbs.append(LI(A(T(header), _class=trap_class(),
                                     _href=url()), _class='active w2p_grid_breadcrumb_elem'))
             grid.insert(

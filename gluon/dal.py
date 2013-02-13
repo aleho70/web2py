@@ -342,7 +342,13 @@ if not 'google' in DRIVERS:
         LOGGER.debug('no Oracle driver cx_Oracle')
 
     try:
-        import pyodbc
+        try:
+            import pyodbc
+        except ImportError:
+            try:
+                import contrib.pypyodbc as pyodbc
+            except Exception, e:
+                raise ImportError(str(e))
         DRIVERS.append('MSSQL(pyodbc)')
         DRIVERS.append('DB2(pyodbc)')
         DRIVERS.append('Teradata(pyodbc)')
@@ -915,7 +921,7 @@ class BaseAdapter(ConnectionPool):
                 # The reason is that we do not want to trigger
                 # a migration simply because a default value changes.
                 not_null = self.NOT_NULL(field.default, field_type)
-                ftype = ftype.replace('NOT NULL', not_null)            
+                ftype = ftype.replace('NOT NULL', not_null)
             sql_fields_aux[field_name] = dict(sql=ftype)
             # Postgres - PostGIS:
             # geometry fields are added after the table has been created, not now
@@ -1272,9 +1278,9 @@ class BaseAdapter(ConnectionPool):
         return '(%s LIKE %s)' % (self.expand(first),
                                  self.expand('%'+second, 'string'))
 
-    def CONTAINS(self, first, second):
-        field = self.expand(first)
-        if isinstance(second,Expression):            
+    def CONTAINS(self, first, second, case_sensitive=False):
+        if isinstance(second,Expression):
+            field = self.expand(first)
             expr = self.expand(second,'string')
             if first.type.startswith('list:'):
                 expr = 'CONCAT("|", %s, "|")' % expr
@@ -1288,7 +1294,8 @@ class BaseAdapter(ConnectionPool):
                 key = '%|'+str(second).replace('|','||').replace('%','%%')+'|%'
             else:
                 raise RuntimeError("Expression Not Supported")
-            return '(%s LIKE %s)' % (field,self.expand(key,'string'))
+            op = case_sensitive and self.LIKE or self.ILIKE
+            return op(first,key)
 
     def EQ(self, first, second=None):
         if second is None:
@@ -1367,10 +1374,11 @@ class BaseAdapter(ConnectionPool):
             first = expression.first
             second = expression.second
             op = expression.op
+            optional_args = expression.optional_args or {}
             if not second is None:
-                return op(first, second)
+                return op(first, second, **optional_args)
             elif not first is None:
-                return op(first)
+                return op(first,**optional_args)
             elif isinstance(op, str):
                 if op.endswith(';'):
                     op=op[:-1]
@@ -2428,6 +2436,10 @@ class MySQLAdapter(BaseAdapter):
     def EPOCH(self, first):
         return "UNIX_TIMESTAMP(%s)" % self.expand(first)
 
+    def REGEXP(self,first,second):
+        return '(%s REGEXP %s)' % (self.expand(first),
+                                   self.expand(second,'string'))
+
     def _drop(self,table,mode):
         # breaks db integrity but without this mysql does not drop table
         return ['SET FOREIGN_KEY_CHECKS=0;','DROP TABLE %s;' % table,
@@ -2669,12 +2681,13 @@ class PostgreSQLAdapter(BaseAdapter):
         return '(%s ILIKE %s)' % (self.expand(first),
                                   self.expand('%'+second,'string'))
 
-    def CONTAINS(self,first,second):
+    def CONTAINS(self,first,second,case_sensitive=False):
         if first.type in ('string','text', 'json'):
             key = '%'+str(second).replace('%','%%')+'%'
         elif first.type.startswith('list:'):
             key = '%|'+str(second).replace('|','||').replace('%','%%')+'|%'
-        return '(%s ILIKE %s)' % (self.expand(first),self.expand(key,'string'))
+        op = case_sensitive and self.LIKE or self.ILIKE
+        return op(first,key)
 
     # GIS functions
 
@@ -3305,7 +3318,7 @@ class MSSQL2Adapter(MSSQLAdapter):
 
     def execute(self,a):
         return self.log_execute(a.decode('utf8'))
-    
+
 
 class SybaseAdapter(MSSQLAdapter):
     drivers = ('Sybase',)
@@ -3448,13 +3461,17 @@ class FireBirdAdapter(BaseAdapter):
     def SUBSTRING(self,field,parameters):
         return 'SUBSTRING(%s from %s for %s)' % (self.expand(field), parameters[0], parameters[1])
 
-    def CONTAINS(self, first, second):
+    def CONTAINING(self,first,second):
+        "case in-sensitive like operator"
+        return '(%s CONTAINING %s)' % (self.expand(first),
+                                       self.expand(second, 'string'))
+
+    def CONTAINS(self, first, second, case_sensitive=False):
         if first.type in ('string','text'):
             key = str(second).replace('%','%%')
         elif first.type.startswith('list:'):
             key = '|'+str(second).replace('|','||').replace('%','%%')+'|'
-        return '(%s CONTAINING %s)' % (self.expand(first),
-                                       self.expand(key,'string'))
+        return self.CONTAINING(first,second)
 
     def _drop(self,table,mode):
         sequence_name = table._sequence_name
@@ -4616,7 +4633,8 @@ class GoogleDatastoreAdapter(NoSQLAdapter):
             second = [Key.from_path(first._tablename, int(i)) for i in second]
             return [GAEF(first.name,'in',second,lambda a,b:a in b)]
 
-    def CONTAINS(self,first,second):
+    def CONTAINS(self,first,second,case_sensitive=False):
+        # silently ignoring: GAE can only do case sensitive matches!
         if not first.type.startswith('list:'):
             raise SyntaxError("Not supported")
         return [GAEF(first.name,'=',self.expand(second,first.type[5:]),lambda a,b:b in a)]
@@ -5490,7 +5508,7 @@ class MongoDBAdapter(NoSQLAdapter):
                 'list:reference': list,
         }
 
-    error_messages = {"javascript_needed": "This must yet be replaced" + 
+    error_messages = {"javascript_needed": "This must yet be replaced" +
                       " with javascript in order to work."}
 
     def __init__(self,db,uri='mongodb://127.0.0.1:5984/db',
@@ -5569,12 +5587,12 @@ class MongoDBAdapter(NoSQLAdapter):
                     raise ValueError(
                             "invalid objectid argument string: %s" % e)
             else:
-                raise ValueError("Invalid objectid argument string. " + 
+                raise ValueError("Invalid objectid argument string. " +
                                  "Requires an integer or base 16 value")
         elif isinstance(arg, self.ObjectId):
             return arg
         if not isinstance(arg, (int, long)):
-            raise TypeError("object_id argument must be of type " + 
+            raise TypeError("object_id argument must be of type " +
                             "ObjectId or an objectid representable integer")
         if arg == 0:
             hexvalue = "".zfill(24)
@@ -5606,7 +5624,7 @@ class MongoDBAdapter(NoSQLAdapter):
             return value
         return value
 
-    # Safe determines whether a asynchronious request is done or a 
+    # Safe determines whether a asynchronious request is done or a
     # synchronious action is done
     # For safety, we use by default synchronious requests
     def insert(self, table, fields, safe=None):
@@ -5726,7 +5744,7 @@ class MongoDBAdapter(NoSQLAdapter):
         elif len(fields) != 0:
             tablename = fields[0].tablename
         else:
-            raise SyntaxError("The table name could not be found in " + 
+            raise SyntaxError("The table name could not be found in " +
                               "the query nor from the select statement.")
 
         mongoqry_dict = self.expand(query)
@@ -5752,7 +5770,7 @@ class MongoDBAdapter(NoSQLAdapter):
                     sort=mongosort_list, snapshot=snapshot).count()}
         else:
             # pymongo cursor object
-            mongo_list_dicts = ctable.find(mongoqry_dict, 
+            mongo_list_dicts = ctable.find(mongoqry_dict,
                                 mongofields_dict, skip=limitby_skip,
                                 limit=limitby_limit, sort=mongosort_list,
                                 snapshot=snapshot)
@@ -5849,7 +5867,7 @@ class MongoDBAdapter(NoSQLAdapter):
         if safe is None:
             safe = self.safe
         amount = 0
-        amount = self.count(query, False)    
+        amount = self.count(query, False)
         if not isinstance(query, Query):
             raise RuntimeError("query type %s is not supported" % \
                                type(query))
@@ -5985,8 +6003,9 @@ class MongoDBAdapter(NoSQLAdapter):
         return {self.expand(first): ('/%s^/' % \
         self.expand(second, 'string'))}
 
-    def CONTAINS(self, first, second):
-        #There is a technical difference, but mongodb doesn't support
+    def CONTAINS(self, first, second, case_sensitive=False):
+        # silently ignore, only case sensitive
+        # There is a technical difference, but mongodb doesn't support
         # that, but the result will be the same
         return {self.expand(first) : ('/%s/' % \
         self.expand(second, 'string'))}
@@ -6016,7 +6035,8 @@ class MongoDBAdapter(NoSQLAdapter):
         re.escape(self.expand(second, 'string')) + '$'}}
 
     #TODO verify full compatibilty with official oracle contains operator
-    def CONTAINS(self, first, second):
+    def CONTAINS(self, first, second, case_sensitive=False):
+        # silently ignore, only case sensitive
         #There is a technical difference, but mongodb doesn't support
         # that, but the result will be the same
         #TODO contains operators need to be transformed to Regex
@@ -6146,7 +6166,7 @@ class IMAPAdapter(NoSQLAdapter):
     # This avoids the extra server names retrieval
 
     imapdb.define_tables({"inbox": "INBOX"})
-    
+
     # Selects without content/attachments/email columns will only
     # fetch header and flags
 
@@ -6539,7 +6559,7 @@ class IMAPAdapter(NoSQLAdapter):
 
                     # keep the requests small for header/flags
                     if any([(field.name in ["content", "size",
-                                            "attachments", "email"]) for 
+                                            "attachments", "email"]) for
                            field in fields]):
                         imap_fields = "(RFC822 FLAGS)"
                     else:
@@ -6806,7 +6826,8 @@ class IMAPAdapter(NoSQLAdapter):
         # result = "(%s %s)" % (self.expand(first), self.expand(second))
         return result
 
-    def CONTAINS(self, first, second):
+    def CONTAINS(self, first, second, case_sensitive=False):
+        # silently ignore, only case sensitive
         result = None
         name = self.search_fields[first.name]
 
@@ -7446,6 +7467,13 @@ class DAL(object):
        db = DAL('sqlite://test.db')
        db.define_table('tablename', Field('fieldname1'),
                                     Field('fieldname2'))
+
+    (experimental)
+    you can pass a dict object as uri with the uri string
+    and table/field definitions. For an example of valid data check
+    the output of:
+
+    >>> db.as_dict(flat=True, sanitize=False)
     """
 
     def __new__(cls, uri='sqlite://dummy.db', *args, **kwargs):
@@ -7550,7 +7578,7 @@ class DAL(object):
                 db._adapter.commit_prepared(keys[i])
         return
 
-    def __init__(self, uri='sqlite://dummy.db',
+    def __init__(self, uri=None,
                  pool_size=0, folder=None,
                  db_codec='UTF-8', check_reserved=None,
                  migrate=True, fake_migrate=False,
@@ -7586,16 +7614,26 @@ class DAL(object):
         :attempts (defaults to 5). Number of times to attempt connecting
         """
 
-        dbdict = None
+        DEFAULT_URI = 'sqlite://dummy.db'
+        items = None
+        if isinstance(uri, dict):
+            if "items" in uri:
+                items = uri.pop("items")
+            try:
+                newuri = uri.pop("uri")
+            except KeyError:
+                newuri = DEFAULT_URI
+            locals().update(uri)
+            uri = newuri
+        elif not uri:
+            uri = DEFAULT_URI
+
         if uri == '<zombie>' and db_uid is not None: return
-        elif isinstance(uri, dict):
-            dbdict = uri
-            uri = dbdict["uri"]
-            codec = dbdict["codec"] or codec
         if not decode_credentials:
             credential_decoder = lambda cred: cred
         else:
             credential_decoder = lambda cred: urllib.unquote(cred)
+        self._folder = folder
         if folder:
             self.set_folder(folder)
         self._uri = uri
@@ -7613,6 +7651,13 @@ class DAL(object):
         self._LAZY_TABLES = {}
         self._lazy_tables = lazy_tables
         self._tables = SQLCallableList()
+        self._driver_args = driver_args
+        self._adapter_args = adapter_args
+        self._check_reserved = check_reserved
+        self._decode_credentials = decode_credentials
+        self._attempts = attempts
+        self._do_connect = do_connect
+
         if not str(attempts).isdigit() or attempts < 0:
             attempts = 5
         if uri:
@@ -7673,9 +7718,9 @@ class DAL(object):
         self._fake_migrate = fake_migrate
         self._migrate_enabled = migrate_enabled
         self._fake_migrate_all = fake_migrate_all
-        if auto_import or dbdict:
+        if auto_import or items:
             self.import_table_definitions(adapter.folder,
-                                          items=dbdict["items"])
+                                          items=items)
 
     @property
     def tables(self):
@@ -7688,10 +7733,16 @@ class DAL(object):
             for tablename, table in items.iteritems():
                 # TODO: read all field/table options
                 fields = []
-                for fieldname, field in table["items"].iteritems():
-                    type = field["type"]
-                    fields.append(Field(fieldname, type))
-                self.define_table(tablename, *fields)
+                # remove unsupported/illegal Table arguments
+                [table.pop(name) for name in ("name", "fields") if
+                 name in table]
+                if "items" in table:
+                    for fieldname, field in table.pop("items").iteritems():
+                        # remove unsupported/illegal Field arguments
+                        [field.pop(key) for key in ("requires", "name",
+                         "compute", "colname") if key in field]
+                        fields.append(Field(str(fieldname), **field))
+                self.define_table(str(tablename), *fields, **table)
         else:
             for filename in glob.glob(pattern):
                 tfile = self._adapter.file_open(filename, 'r')
@@ -7744,14 +7795,14 @@ def index():
             "/{person.name}/pets[pet.ownedby]/{pet.name}",
             "/{person.name}/pets[pet.ownedby]/{pet.name}/:field",
             ("/dogs[pet]", db.pet.info=='dog'),
-            ("/dogs[pet]/{pet.name.startswith}", db.pet.info=='dog'),       
+            ("/dogs[pet]/{pet.name.startswith}", db.pet.info=='dog'),
             ]
         parser = db.parse_as_rest(patterns,args,vars)
         if parser.status == 200:
             return dict(content=parser.response)
         else:
             raise HTTP(parser.status,parser.error)
-            
+
     def POST(table_name,**vars):
         if table_name == 'person':
             return db.person.validate_and_insert(**vars)
@@ -7842,10 +7893,12 @@ def index():
             return Row({'status':200,'pattern':'list',
                         'error':None,'response':patterns})
         for pattern in patterns:
+            basequery, exposedfields = None, []
             if isinstance(pattern,tuple):
-                pattern, basequery = pattern
-            else:
-                basequery = None
+                if len(pattern)==2:
+                    pattern, basequery = pattern
+                elif len(pattern)>2:
+                    pattern, basequery, exposedfields = pattern[0:3]
             otable=table=None
             if not isinstance(queries,dict):
                 dbset=db(queries)
@@ -7958,7 +8011,10 @@ def index():
                         orderby = [db[table][f] if not f.startswith('~') else ~db[table][f[1:]] for f in ofields]
                     except (KeyError, AttributeError):
                         return Row({'status':400,'error':'invalid orderby','response':None})
-                    fields = [field for field in db[table] if field.readable]
+                    if exposedfields:
+                        fields = [field for field in db[table] if str(field).split('.')[-1] in exposedfields and field.readable]
+                    else:    
+                        fields = [field for field in db[table] if field.readable]
                     count = dbset.count()
                     try:
                         offset = int(vars.get('offset',None) or 0)
@@ -8047,12 +8103,20 @@ def index():
         return table
 
     def as_dict(self, flat=False, sanitize=True):
-        dbname = codec = uid = uri = None
+        dbname = db_uid = uri = None
         if not sanitize:
-            uri, dbname, codec, uid = (self._uri, self._dbname,
-                                       self._db_codec, self._db_uid)
+            uri, dbname, db_uid = (self._uri, self._dbname, self._db_uid)
         db_as_dict = dict(items={}, tables=[], uri=uri, dbname=dbname,
-                          codec=codec, uid=uid)
+                          db_uid=db_uid,
+                          **dict([(k, getattr(self, "_" + k)) for
+                          k in 'pool_size','folder','db_codec',
+                          'check_reserved','migrate','fake_migrate',
+                          'migrate_enabled','fake_migrate_all',
+                          'decode_credentials','driver_args',
+                          'adapter_args', 'attempts',
+                          'bigint_id','debug','lazy_tables',
+                          'do_connect']))
+
         for table in self:
             tablename = str(table)
             db_as_dict["tables"].append(tablename)
@@ -8071,6 +8135,12 @@ def index():
             raise ImportError("No json serializers available")
         d = self.as_dict(flat=True, sanitize=sanitize)
         return serializers.json(d)
+
+    def as_yaml(self, sanitize=True):
+        if not have_serializers:
+            raise ImportError("No YAML serializers available")
+        d = self.as_dict(flat=True, sanitize=sanitize)
+        return serializers.yaml(d)
 
     def __contains__(self, tablename):
         try:
@@ -8963,7 +9033,12 @@ class Table(object):
 
     def as_dict(self, flat=False, sanitize=True):
         tablename = str(self)
-        table_as_dict = dict(name=tablename, items={}, fields=[])
+        table_as_dict = dict(name=tablename, items={}, fields=[],
+        sequence_name=self._sequence_name,
+        trigger_name=self._trigger_name,
+        common_filter=self._common_filter, format=self._format,
+        singular=self._singular, plural=self._plural)
+
         for field in self:
             if (field.readable or field.writable) or (not sanitize):
                 table_as_dict["fields"].append(field.name)
@@ -8982,6 +9057,12 @@ class Table(object):
             raise ImportError("No json serializers available")
         d = self.as_dict(flat=True, sanitize=sanitize)
         return serializers.json(d)
+
+    def as_yaml(self, sanitize=True):
+        if not have_serializers:
+            raise ImportError("No YAML serializers available")
+        d = self.as_dict(flat=True, sanitize=sanitize)
+        return serializers.yaml(d)
 
     def with_alias(self, alias):
         return self._db._adapter.alias(self,alias)
@@ -9010,6 +9091,7 @@ class Expression(object):
         first=None,
         second=None,
         type=None,
+        **optional_args
         ):
 
         self.db = db
@@ -9022,6 +9104,7 @@ class Expression(object):
             self.type = first.type
         else:
             self.type = type
+        self.optional_args = optional_args
 
     def sum(self):
         db = self.db
@@ -9211,24 +9294,30 @@ class Expression(object):
             raise SyntaxError("endswith used with incompatible field type")
         return Query(db, db._adapter.ENDSWITH, self, value)
 
-    def contains(self, value, all=False):
+    def contains(self, value, all=False, case_sensitive=False):
+        """
+        The case_sensitive parameters is only useful for PostgreSQL
+        For other RDMBs it is ignored and contains is always case in-sensitive
+        For MongoDB and GAE contains is always case sensitive
+        """
         db = self.db
         if isinstance(value,(list, tuple)):
-            subqueries = [self.contains(str(v).strip()) for v in value if str(v).strip()]
+            subqueries = [self.contains(str(v).strip(),case_sensitive=case_sensitive)
+                          for v in value if str(v).strip()]
             if not subqueries:
                 return self.contains('')
             else:
                 return reduce(all and AND or OR,subqueries)
         if not self.type in ('string', 'text', 'json') and not self.type.startswith('list:'):
             raise SyntaxError("contains used with incompatible field type")
-        return Query(db, db._adapter.CONTAINS, self, value)
+        return Query(db, db._adapter.CONTAINS, self, value, case_sensitive=case_sensitive)
 
     def with_alias(self, alias):
         db = self.db
         return Expression(db, db._adapter.AS, self, alias, self.type)
 
     # GIS expressions
-    
+
     def st_asgeojson(self, precision=15, options=0, version=1):
         return Expression(self.db, self.db._adapter.ST_ASGEOJSON, self,
                           dict(precision=precision, options=options,
@@ -9562,7 +9651,7 @@ class Field(Expression):
             stream = self.uploadfs.open(name, 'rb')
         else:
             # ## if file is on regular filesystem
-            stream = open(pjoin(file_properties['path'], name), 'rb')
+            stream = pjoin(file_properties['path'], name)
         return (filename, stream)
 
     def retrieve_file_properties(self, name, path=None):
@@ -9629,8 +9718,17 @@ class Field(Expression):
         return Expression(self.db, self.db._adapter.COUNT, self, distinct, 'integer')
 
     def as_dict(self, flat=False, sanitize=True):
-        attrs = ("readable", "writable", "label", "default", "name",
-                 "type", "represent", "compute")
+
+        attrs = ('type', 'length', 'default', 'required',
+                 'ondelete', 'notnull', 'unique', 'uploadfield',
+                 'widget', 'label', 'comment', 'writable', 'readable',
+                 'update', 'authorize', 'autodelete', 'represent',
+                 'uploadfolder', 'uploadseparate', 'uploadfs',
+                 'compute', 'custom_store', 'custom_retrieve',
+                 'custom_retrieve_file_properties', 'custom_delete',
+                 'filter_in', 'filter_out', 'custom_qualifier',
+                 'map_none', 'name')
+
         SERIALIZABLE_TYPES = (int, long, basestring, dict, list,
                               float, tuple, bool, type(None))
         def flatten(obj):
@@ -9691,6 +9789,13 @@ class Field(Expression):
         d = self.as_dict(flat=True, sanitize=sanitize)
         return json(d)
 
+    def as_yaml(self, sanitize=True):
+        if have_serializers:
+            d = self.as_dict(flat=True, sanitize=sanitize)
+            return serializers.yaml(d)
+        else:
+            raise ImportError("No YAML serializers available")
+
     def __nonzero__(self):
         return True
 
@@ -9722,12 +9827,14 @@ class Query(object):
         first=None,
         second=None,
         ignore_common_filters = False,
+        **optional_args
         ):
         self.db = self._db = db
         self.op = op
         self.first = first
         self.second = second
         self.ignore_common_filters = ignore_common_filters
+        self.optional_args = optional_args
 
     def __repr__(self):
         return '<Query %s>' % BaseAdapter.expand(self.db._adapter,self)
